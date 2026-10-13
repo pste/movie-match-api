@@ -1,0 +1,74 @@
+name: Build and Push Docker Image
+
+on:
+    push:
+        tags:
+            - 'v*' # solo sui tag v1.2.3
+
+# Il GITHUB_TOKEN del job serve solo a leggere questo repo: la scrittura sul
+# repo k8s passa da K8S_REPO_TOKEN. Senza il blocco il token ha i permessi di
+# default del repo, spesso in scrittura.
+permissions:
+    contents: read
+
+jobs:
+    build-and-push:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4.4.0
+
+            - name: Log in to Docker Hub
+              uses: docker/login-action@v3.7.0
+              with:
+                username: ${{ vars.DOCKERHUB_USERNAME }}
+                password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+            - name: Build and Push
+              uses: docker/build-push-action@v5.4.0
+              with:
+                context: .
+                file: .docker/Dockerfile
+                push: true
+                tags: |
+                  pirraste/movie-match-api:${{ github.ref_name }}
+
+            # Il checksum e' quello pubblicato con la release: un binario diverso
+            # da quello atteso non deve mai girare con il token del repo k8s.
+            - name: Install kustomize
+              run: |
+                curl -sLo kustomize.tar.gz https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.1/kustomize_v5.4.1_linux_amd64.tar.gz
+                echo "3d659a80398658d4fec4ec4ca184b432afa1d86451a60be63ca6e14311fc1c42  kustomize.tar.gz" | sha256sum -c -
+                tar -xzf kustomize.tar.gz
+                sudo mv kustomize /usr/local/bin/
+
+            - name: Write back image tag in k8s repo
+              env:
+                GH_TOKEN: ${{ secrets.K8S_REPO_TOKEN }}
+                IMAGE: pirraste/movie-match-api
+                TAG: ${{ github.ref_name }}
+              # api e ui scrivono sullo stesso kustomization.yaml: se rilasciano
+              # insieme il secondo push viene rifiutato perche' non e'
+              # fast-forward. Si riparte ogni volta dall'ultimo stato del repo e
+              # si rifa' l'edit, invece di un rebase: le righe delle immagini sono
+              # adiacenti, e due edit vicini andrebbero in conflitto.
+              run: |
+                git clone https://x-access-token:${GH_TOKEN}@github.com/pste/movie-match-k8s.git k8s-repo
+                cd k8s-repo/k8s
+                git config user.email "actions@github.com"
+                git config user.name "GitHub Actions"
+                for attempt in 1 2 3 4 5; do
+                  git fetch -q && git reset -q --hard @{u}
+                  kustomize edit set image ${IMAGE}:${TAG}
+                  git add kustomization.yaml
+                  if git diff --cached --quiet; then
+                    exit 0
+                  fi
+                  git commit -q -m "chore: update ${IMAGE} to ${TAG}"
+                  if git push; then
+                    exit 0
+                  fi
+                  sleep $((attempt * 5))
+                done
+                exit 1
