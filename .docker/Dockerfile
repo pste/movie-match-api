@@ -1,22 +1,25 @@
-FROM python:3.12.12-slim
+FROM node:24.13.0-alpine
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+# SETUP npm
+RUN npm config set engine-strict true
 
 # INSTALL PACKAGES
 # Prima delle sorgenti: un cambio al codice non rifa' l'installazione.
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+ENV NODE_ENV=production
+COPY package*.json .
+RUN npm ci --omit=dev
 
 # INSTALL APP
-COPY app/ app/
+COPY app.js .
+COPY src/ src/
 
 # SECURITY CHECK
-# Stesso uid del runAsUser dei pod k8s.
-RUN useradd --uid 1000 --no-create-home --shell /usr/sbin/nologin app
-USER 1000
+# L'utente node dell'immagine ha uid 1000, lo stesso del runAsUser dei pod k8s.
+RUN chown -R node:node /app
+USER node
 
 EXPOSE 8000
-# --proxy-headers: dietro Traefik l'IP del client arriva da X-Forwarded-For.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# node direttamente e non "npm run prod": npm non inoltra SIGTERM, e k8s
+# aspetterebbe il timeout prima di uccidere il pod.
+CMD ["node", "app.js"]

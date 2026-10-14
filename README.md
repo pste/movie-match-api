@@ -1,13 +1,12 @@
 # movie-match-api
 
-API REST di movie-match: FastAPI + psycopg 3 (pool async), SQL scritta a mano.
-È l'unico componente che parla col database.
+API REST di movie-match: Node.js 24 + Fastify 5 + pg, SQL scritta a mano. Stesso impianto di
+photovault-api. È l'unico componente che parla col database.
 
 ## Setup
 
 ```bash
-uv venv .venv --python 3.12
-uv pip install --python .venv -r requirements-dev.txt
+npm install
 cp .env.dist .env      # stesse credenziali di movie-match-db/.env
 ```
 
@@ -16,21 +15,35 @@ Lo schema lo crea `movie-match-db` (`node app.js -e local up`).
 ## Uso
 
 ```bash
-# dev server, con reload
-.venv/bin/uvicorn app.main:app --port 8000 --reload
+# dev server su :8000, si riavvia quando cambia un file
+npm run dev
 
-# test: girano contro il Postgres di .env e cancellano i film che creano
-.venv/bin/python -m pytest -q
+# test (node:test): girano contro il Postgres di .env e cancellano quello che creano
+npm test
 ```
 
-Documentazione OpenAPI su `http://localhost:8000/api/docs`.
+`.env` lo legge Node stesso (`--env-file-if-exists`): niente dotenv. In produzione le variabili
+arrivano dal pod.
+
+## Struttura
+
+```
+app.js                  # avvia il server, o uno script (backfill-genres)
+src/server.js           # Fastify: hook, gestione errori, registrazione delle rotte
+src/routes/*.js         # le rotte, un file per risorsa
+src/schemas.js          # schemi JSON di body, querystring e parametri
+src/dbmodels/*.js       # la SQL, un file per tabella
+src/db.js               # pool pg
+src/imdb.js             # ricerca IMDb
+tests/*.test.js
+```
 
 ## Rotte
 
 | Metodo | Percorso | |
 |---|---|---|
 | GET | `/api/health` | probe k8s, non tocca il DB |
-| GET | `/api/imdb/search?q=` | cerca film su IMDb: `{imdb_id, title, year, poster_url, director}` |
+| GET | `/api/imdb/search?q=` | cerca film su IMDb: `{imdb_id, title, year, poster_url, director, genres}` |
 | GET | `/api/users` | utenti, con film candidati e visti |
 | POST | `/api/users` | aggiunge `{name}`; 409 se il nome esiste già (senza distinzione di maiuscole) |
 | PUT | `/api/users/{id}` | rinomina `{name}` |
@@ -44,29 +57,38 @@ Documentazione OpenAPI su `http://localhost:8000/api/docs`.
 | GET | `/api/draw/odds?genre=&user_id=` | probabilità attuale di ogni utente all'estrazione, con gli stessi filtri |
 | GET | `/api/picks` | ultime estrazioni (`?limit=20`) |
 
+Gli errori sono `{detail}`: una stringa per quelli dell'applicazione, una lista per i dati non
+validi (422).
+
 ## Script
 
 ```bash
 # completa i generi IMDb dei film che non ne hanno (dopo la migration imdbGenres);
 # idempotente, si puo' rilanciare
-.venv/bin/python -m app.backfill_genres
+npm run backfill-genres
 ```
 
 ## Scelte
 
-- **Estrazione equa, casuale pesata** (`dbmodels/picks.py`). Fra gli utenti che hanno almeno
+- **Riscritta da Python (FastAPI) a Node.js** (2026-10-14), con lo stesso contratto HTTP: rotte,
+  porta 8000, forma degli errori e codici di stato sono quelli di prima, quindi UI e manifest
+  k8s non sono cambiati. Differenza visibile: i timestamp hanno i millisecondi invece dei
+  microsecondi.
+- **Estrazione equa, casuale pesata** (`src/dbmodels/picks.js`). Fra gli utenti che hanno almeno
   un candidato (col filtro di genere), ognuno pesa `1 / (1 + suoi film già visti)`; si estrae
   l'utente secondo il peso, poi un suo film a caso. Quanti film uno propone non conta. I film
   senza utente (nati prima degli utenti) fanno un gruppo a sé. `/api/draw/odds` usa la stessa
   CTE, quindi le probabilità mostrate sono quelle vere; un test fa 300 estrazioni e controlla
   che la frequenza segua il peso.
-
-- **IMDb via l'API GraphQL del sito** (`app/imdb.py`), non un'API pubblica: niente chiave, ma
+- **IMDb via l'API GraphQL del sito** (`src/imdb.js`), non un'API pubblica: niente chiave, ma
   è consentita solo per uso limitato e non commerciale, e può cambiare senza preavviso. Senza gli
   header `Origin` e `x-imdb-client-name` risponde 403. Una chiamata dà titolo in italiano, anno,
-  locandina (ridimensionata a 300 px dal CDN) e regista, solo film. Se IMDb non risponde la
-  ricerca dà 502; la lista no, perché i dati del film scelto si salvano nel database.
-
+  locandina (ridimensionata a 300 px dal CDN), regista e generi, solo film. Se IMDb non risponde
+  la ricerca dà 502; la lista no, perché i dati del film scelto si salvano nel database.
+- **Validazione con gli schemi JSON di Fastify**; gli spazi in testa e in coda si tolgono prima
+  (`trimStrings` in `src/utils.js`), e una stringa vuota vale null.
+- **pg restituisce bigint e numeric come stringhe**: nella SQL i `count()` hanno `::int` e la
+  probabilità `::float8`.
 - **Nessun login**: una lista sola, aperta a chiunque raggiunga l'app. Va bene in
   LAN/Tailscale; esposta su internet chiunque potrebbe modificare la lista.
 - **Estrazione in un'unica istruzione SQL** (CTE `ORDER BY random() LIMIT 1` + `INSERT` nello
@@ -80,4 +102,4 @@ Documentazione OpenAPI su `http://localhost:8000/api/docs`.
 docker build -f .docker/Dockerfile -t pirraste/movie-match-api:v0.1.0 .
 ```
 
-Gira come uid 1000 sulla porta 8000.
+Gira come utente `node` (uid 1000) sulla porta 8000.
