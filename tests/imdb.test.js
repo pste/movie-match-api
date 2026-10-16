@@ -68,8 +68,10 @@ test('la ricerca vuole almeno due caratteri', async () => {
 });
 
 test('parsing delle piattaforme', () => {
-    const option = (id, link, logo = 'https://m.media-amazon.com/images/M/x._V1_.png') => ({
-        provider: { id: `amzn1.imdb.w2w.provider.${id}`, logos: logo ? { icon: { url: logo } } : null },
+    const slate = { slate: { url: 'https://m.media-amazon.com/images/M/s._V1_.png' },
+                    icon: { url: 'https://m.media-amazon.com/images/M/i._V1_.png' } };
+    const option = (id, link, logos = slate) => ({
+        provider: { id: `amzn1.imdb.w2w.provider.${id}`, logos },
         link,
     });
     const payload = { data: { title: { watchOptionsByCategory: { categorizedWatchOptionsList: [
@@ -78,7 +80,8 @@ test('parsing delle piattaforme', () => {
             // fuori lista
             option('now_tv', 'https://www.nowtv.it/'),
             option('netflix', 'https://www.netflix.com/watch/1'),
-            option('prime_video.PRIME', 'https://www.primevideo.com/2'),
+            // senza slate: l'icona
+            option('prime_video.PRIME', 'https://www.primevideo.com/2', { icon: slate.icon }),
             // doppione
             option('netflix', 'https://www.netflix.com/watch/2'),
         ] },
@@ -87,8 +90,8 @@ test('parsing delle piattaforme', () => {
     ] } } } };
     assert.deepEqual(imdb.parseWatchOptions(payload), [
         { name: 'Disney+', logo_url: null, link: 'https://www.disneyplus.com/play/1' },
-        { name: 'Netflix', logo_url: 'https://m.media-amazon.com/images/M/x._V1_QL75_UX64_.jpg', link: 'https://www.netflix.com/watch/1' },
-        { name: 'Prime Video', logo_url: 'https://m.media-amazon.com/images/M/x._V1_QL75_UX64_.jpg', link: 'https://www.primevideo.com/2' },
+        { name: 'Netflix', logo_url: 'https://m.media-amazon.com/images/M/s._V1_QL75_UX256_.jpg', link: 'https://www.netflix.com/watch/1' },
+        { name: 'Prime Video', logo_url: 'https://m.media-amazon.com/images/M/i._V1_QL75_UX256_.jpg', link: 'https://www.primevideo.com/2' },
     ]);
     // film senza piattaforme
     assert.deepEqual(imdb.parseWatchOptions({ data: { title: { watchOptionsByCategory: null } } }), []);

@@ -69,7 +69,7 @@ query ($id: ID!) {
       categorizedWatchOptionsList {
         categoryName { value }
         watchOptions {
-          provider { id logos { icon { url } } }
+          provider { id logos { slate { url } icon { url } } }
           link(platform: WEB)
         }
       }
@@ -80,7 +80,7 @@ query ($id: ID!) {
 
 const RESULTS = 10;
 const POSTER_WIDTH = 300;
-const LOGO_WIDTH = 64;
+const LOGO_WIDTH = 256;
 const TIMEOUT_MS = 8000;
 
 class ImdbError extends Error {}
@@ -88,7 +88,7 @@ class ImdbError extends Error {}
 // Le locandine IMDb sono su m.media-amazon.com, in originale anche da 2000 px.
 // Il suffisso "._V1_<opzioni>.jpg" chiede al CDN una versione ridimensionata:
 // a 300 px sono ~15 KB invece di ~1 MB. Vale anche per i loghi delle
-// piattaforme, che sono png da 500 px: a 64 px meno di 1 KB.
+// piattaforme, png da 1280 px: a 256 px pochi KB.
 function resizePoster(url, width = POSTER_WIDTH) {
     if (!url) {
         return null;
@@ -128,7 +128,10 @@ function parseWatchOptions(payload) {
         if (!name || platforms.some((platform) => platform.name === name)) {
             continue;
         }
-        const logoUrl = resizePoster(option.provider.logos?.icon?.url, LOGO_WIDTH);
+        // Lo slate e' il logo orizzontale (16:9), che la UI mostra largo quanto
+        // la locandina; l'icona quadrata solo se manca.
+        const logos = option.provider.logos;
+        const logoUrl = resizePoster(logos?.slate?.url ?? logos?.icon?.url, LOGO_WIDTH);
         platforms.push({ name, logo_url: logoUrl, link: option.link ?? null });
     }
     return platforms;
