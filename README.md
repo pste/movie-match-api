@@ -78,8 +78,10 @@ npm run backfill-genres
 - **Estrazione equa, casuale pesata** (`src/dbmodels/picks.js`). Fra gli utenti che hanno almeno
   un candidato (col filtro di genere), ognuno pesa `1 / (1 + suoi film già visti)`; si estrae
   l'utente secondo il peso, poi un suo film a caso. Quanti film uno propone non conta. I film
-  senza utente (nati prima degli utenti) fanno un gruppo a sé. `/api/draw/odds` usa la stessa
-  CTE, quindi le probabilità mostrate sono quelle vere; un test fa 300 estrazioni e controlla
+  senza utente (nati prima degli utenti) fanno un gruppo a sé. Candidati e peso vengono dalla
+  view `draw_candidates` (migration `drawCandidates` di movie-match-db); i filtri di genere e
+  utente si aggiungono nella query. `/api/draw/odds` legge la stessa view con gli stessi filtri,
+  quindi le probabilità mostrate sono quelle vere; un test fa 300 estrazioni e controlla
   che la frequenza segua il peso.
 - **IMDb via l'API GraphQL del sito** (`src/imdb.js`), non un'API pubblica: niente chiave, ma
   è consentita solo per uso limitato e non commerciale, e può cambiare senza preavviso. Senza gli
@@ -98,7 +100,7 @@ npm run backfill-genres
   probabilità `::float8`.
 - **Nessun login**: una lista sola, aperta a chiunque raggiunga l'app. Va bene in
   LAN/Tailscale; esposta su internet chiunque potrebbe modificare la lista.
-- **Estrazione in un'unica istruzione SQL** (CTE `ORDER BY random() LIMIT 1` + `INSERT` nello
+- **Estrazione in un'unica istruzione SQL** (CTE su `draw_candidates`, `ORDER BY random() LIMIT 1` + `INSERT` nello
   storico): niente transazione esplicita da gestire.
 - **Niente CORS**: in produzione UI e API stanno sullo stesso host dietro l'ingress, in
   sviluppo il proxy di Vite fa lo stesso.

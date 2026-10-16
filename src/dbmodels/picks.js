@@ -10,33 +10,19 @@ const SELECT_PICKS = `
 
 // Estrazione equa, casuale pesata. Parametri: $1 genere, $2 utente.
 //
-// candidates: i film ancora da vedere, con due filtri facoltativi e
-//             combinabili: un genere fra i loro (un film ne ha di solito da uno
-//             a tre) e l'utente che li ha proposti. Con l'utente scelto resta
-//             un gruppo solo, e l'estrazione e' semplicemente a caso fra i
-//             suoi film.
-// weights:    un gruppo per ogni utente che ha almeno un candidato (i film
-//             senza utente, nati prima degli utenti, fanno un gruppo a se').
-//             Il peso e' 1 / (1 + film di quell'utente gia' visti): chi ha
-//             avuto meno film scelti ha piu' probabilita' di uscire.
-//
-// Il numero di candidati di un utente non conta: proporre dieci film non
-// aumenta le probabilita' di essere scelti.
-const WEIGHTS_CTE = `
+// I candidati con il loro peso vengono dalla view draw_candidates (vedi la
+// migration drawCandidates in movie-match-db): film ancora da vedere, weight =
+// 1 / (1 + film gia' visti del suo utente). Qui si aggiungono i due filtri
+// facoltativi e combinabili, che una view non puo' ricevere: un genere fra
+// quelli del film (di solito da uno a tre) e l'utente che l'ha proposto. Con
+// l'utente scelto resta un gruppo solo, e l'estrazione e' semplicemente a caso
+// fra i suoi film.
+const CANDIDATES_CTE = `
     candidates AS (
-        SELECT movie_id, user_id FROM movies
-        WHERE watched IS NULL
-          AND ($1::varchar IS NULL
+        SELECT movie_id, user_id, user_watched, weight FROM draw_candidates
+        WHERE ($1::varchar IS NULL
                OR lower($1::varchar) IN (SELECT lower(g) FROM unnest(genres) AS g))
           AND ($2::integer IS NULL OR user_id = $2::integer)
-    ),
-    weights AS (
-        SELECT c.user_id,
-               count(*)::int AS candidates,
-               (SELECT count(*) FROM movies w
-                WHERE w.watched IS NOT NULL AND w.user_id IS NOT DISTINCT FROM c.user_id)::int AS watched
-        FROM candidates c
-        GROUP BY c.user_id
     )
 `;
 
@@ -47,16 +33,20 @@ function toPick(row) {
     return { pick_id, picked, movie };
 }
 
-// Le probabilita' attuali di ogni utente: la stessa CTE dell'estrazione, cosi'
-// quello che mostra la UI e' esattamente quello che succede.
-// ::float8 perche' pg restituirebbe il numeric come stringa.
+// Le probabilita' attuali di ogni utente: stessi candidati e stesso peso
+// dell'estrazione, cosi' quello che mostra la UI e' esattamente quello che
+// succede. Un gruppo per ogni utente che ha almeno un candidato (i film senza
+// utente fanno un gruppo a se'); il numero di candidati non conta nel peso.
 async function odds(genre, userId) {
     return await fetchAll(`
-        WITH ${WEIGHTS_CTE}
-        SELECT w.user_id, u."name" AS user_name, w.candidates, w.watched,
-               ((1.0 / (1 + w.watched)) / sum(1.0 / (1 + w.watched)) OVER ())::float8 AS probability
-        FROM weights w
-        LEFT JOIN users u ON u.user_id = w.user_id
+        WITH ${CANDIDATES_CTE}
+        SELECT c.user_id, u."name" AS user_name,
+               count(*)::int AS candidates,
+               c.user_watched AS watched,
+               c.weight / sum(c.weight) OVER () AS probability
+        FROM candidates c
+        LEFT JOIN users u ON u.user_id = c.user_id
+        GROUP BY c.user_id, u."name", c.user_watched, c.weight
         ORDER BY probability DESC, lower(u."name")`,
         [genre, userId]);
 }
@@ -70,10 +60,11 @@ async function odds(genre, userId) {
 // MATERIALIZED: chosen_user va calcolata una volta sola.
 async function draw(genre, userId) {
     const row = await fetchOne(`
-        WITH ${WEIGHTS_CTE},
+        WITH ${CANDIDATES_CTE},
         chosen_user AS MATERIALIZED (
-            SELECT user_id FROM weights
-            ORDER BY -ln(1 - random()) * (1 + watched)
+            SELECT user_id FROM candidates
+            GROUP BY user_id, weight
+            ORDER BY -ln(1 - random()) / weight
             LIMIT 1
         ),
         chosen AS (
