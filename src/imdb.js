@@ -5,6 +5,11 @@
 // di un'app di casa. Senza Origin e x-imdb-client-name risponde 403.
 // Una sola chiamata da' titolo e generi (in italiano, con x-imdb-user-language),
 // anno, locandina e regista di ogni risultato, solo film (niente serie).
+//
+// Da' anche dove si puo' vedere un film in streaming. Il paese lo decide IMDb
+// dall'IP di chi chiama, non dalla location della query (provato: con le
+// coordinate di New York risponde comunque con NOW Italia): funziona finche'
+// l'API gira in Italia.
 const GRAPHQL_URL = 'https://api.graphql.imdb.com/';
 
 const HEADERS = {
@@ -43,20 +48,52 @@ query ($id: ID!) {
 }
 `;
 
+// Le piattaforme da mostrare sul film estratto, per id del provider IMDb: per
+// aggiungerne una basta il suo id (es. amzn1.imdb.w2w.provider.now_tv).
+// Prime Video "incluso con Prime" ha il suffisso .PRIME: senza e' il noleggio.
+// Crunchyroll IMDb lo conosce solo come canale di Prime Video: il link porta
+// alla pagina Prime Video del film.
+const PLATFORMS = {
+    'amzn1.imdb.w2w.provider.netflix': 'Netflix',
+    'amzn1.imdb.w2w.provider.disneyplus': 'Disney+',
+    'amzn1.imdb.w2w.provider.prime_video.PRIME': 'Prime Video',
+    'amzn1.imdb.w2w.provider.prime_video.crunchyroll': 'Crunchyroll',
+};
+
+// STREAMING e' la categoria "in abbonamento"; l'altra e' RENT/BUY, a pagamento.
+// La location e' Milano, anche se IMDb usa l'IP (vedi sopra).
+const WATCH_QUERY = `
+query ($id: ID!) {
+  title(id: $id) {
+    watchOptionsByCategory(location: {latLong: {lat: "45.46", long: "9.19"}}) {
+      categorizedWatchOptionsList {
+        categoryName { value }
+        watchOptions {
+          provider { id logos { icon { url } } }
+          link(platform: WEB)
+        }
+      }
+    }
+  }
+}
+`;
+
 const RESULTS = 10;
 const POSTER_WIDTH = 300;
+const LOGO_WIDTH = 64;
 const TIMEOUT_MS = 8000;
 
 class ImdbError extends Error {}
 
 // Le locandine IMDb sono su m.media-amazon.com, in originale anche da 2000 px.
 // Il suffisso "._V1_<opzioni>.jpg" chiede al CDN una versione ridimensionata:
-// a 300 px sono ~15 KB invece di ~1 MB.
+// a 300 px sono ~15 KB invece di ~1 MB. Vale anche per i loghi delle
+// piattaforme, che sono png da 500 px: a 64 px meno di 1 KB.
 function resizePoster(url, width = POSTER_WIDTH) {
     if (!url) {
         return null;
     }
-    return url.replace(/\._V1_.*\.jpg$/, `._V1_QL75_UX${width}_.jpg`);
+    return url.replace(/\._V1_.*\.(jpg|png)$/, `._V1_QL75_UX${width}_.jpg`);
 }
 
 function parseTitle(title) {
@@ -78,6 +115,23 @@ function parseSearch(payload) {
     return edges
         .filter((edge) => edge.node.entity.id)
         .map((edge) => parseTitle(edge.node.entity));
+}
+
+// Le piattaforme in abbonamento fra quelle di PLATFORMS, una volta sola
+// ciascuna, nell'ordine dato da IMDb.
+function parseWatchOptions(payload) {
+    const categories = payload.data?.title?.watchOptionsByCategory?.categorizedWatchOptionsList || [];
+    const streaming = categories.find((category) => category.categoryName?.value === 'STREAMING');
+    const platforms = [];
+    for (const option of streaming?.watchOptions || []) {
+        const name = PLATFORMS[option.provider?.id];
+        if (!name || platforms.some((platform) => platform.name === name)) {
+            continue;
+        }
+        const logoUrl = resizePoster(option.provider.logos?.icon?.url, LOGO_WIDTH);
+        platforms.push({ name, logo_url: logoUrl, link: option.link ?? null });
+    }
+    return platforms;
 }
 
 async function queryImdb(query, variables) {
@@ -114,4 +168,9 @@ async function getTitle(imdbId) {
     return title ? parseTitle(title) : null;
 }
 
-module.exports = { ImdbError, resizePoster, parseSearch, search, getTitle };
+// Dove si puo' vedere un film adesso: non si salva, cambia di continuo.
+async function getWatchOptions(imdbId) {
+    return parseWatchOptions(await queryImdb(WATCH_QUERY, { id: imdbId }));
+}
+
+module.exports = { ImdbError, resizePoster, parseSearch, parseWatchOptions, search, getTitle, getWatchOptions };

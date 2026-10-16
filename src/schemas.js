@@ -30,6 +30,14 @@ const imdbSearchQuery = {
     },
 };
 
+const imdbIdParams = {
+    type: 'object',
+    required: ['imdb_id'],
+    properties: {
+        imdb_id: { type: 'string', pattern: '^tt\\d{5,10}$' },
+    },
+};
+
 // Un risultato della ricerca IMDb, ed e' anche quello che la UI rimanda per
 // aggiungere il film scelto alla lista: piu' chi lo propone, obbligatorio.
 const movieCreate = {
@@ -103,5 +111,5 @@ const picksQuery = {
 };
 
 module.exports = {
-    idParams, imdbSearchQuery, movieCreate, movieUpdate, watchedBody, userBody, drawFilters, picksQuery,
+    idParams, imdbSearchQuery, imdbIdParams, movieCreate, movieUpdate, watchedBody, userBody, drawFilters, picksQuery,
 };

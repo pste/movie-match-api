@@ -44,6 +44,7 @@ tests/*.test.js
 |---|---|---|
 | GET | `/api/health` | probe k8s, non tocca il DB |
 | GET | `/api/imdb/search?q=` | cerca film su IMDb: `{imdb_id, title, year, poster_url, director, genres}` |
+| GET | `/api/imdb/{imdb_id}/platforms` | dove il film è in abbonamento adesso, fra Netflix, Disney+, Prime Video e Crunchyroll: `[{name, logo_url, link}]`; 502 se IMDb non risponde |
 | GET | `/api/users` | utenti, con film candidati e visti |
 | POST | `/api/users` | aggiunge `{name}`; 409 se il nome esiste già (senza distinzione di maiuscole) |
 | PUT | `/api/users/{id}` | rinomina `{name}` |
@@ -85,6 +86,12 @@ npm run backfill-genres
   header `Origin` e `x-imdb-client-name` risponde 403. Una chiamata dà titolo in italiano, anno,
   locandina (ridimensionata a 300 px dal CDN), regista e generi, solo film. Se IMDb non risponde
   la ricerca dà 502; la lista no, perché i dati del film scelto si salvano nel database.
+- **Piattaforme streaming da IMDb**, chieste al momento e mai salvate (cambiano di continuo).
+  Si mostrano solo quelle della costante `PLATFORMS` in `src/imdb.js`, e solo in abbonamento
+  (Prime Video incluso con Prime è `prime_video.PRIME`; senza suffisso è il noleggio;
+  Crunchyroll c'è solo come canale Prime Video, `prime_video.crunchyroll`). Il paese
+  IMDb lo prende dall'**IP di chi chiama**, non dalla location della query: i dati sono quelli
+  italiani finché l'API gira in Italia.
 - **Validazione con gli schemi JSON di Fastify**; gli spazi in testa e in coda si tolgono prima
   (`trimStrings` in `src/utils.js`), e una stringa vuota vale null.
 - **pg restituisce bigint e numeric come stringhe**: nella SQL i `count()` hanno `::int` e la
